@@ -1,0 +1,21 @@
+# 环境变量（包含敏感信息）
+.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# 输出文件（保留 .gitkeep，忽略其他）
+screenshots/*
+!screenshots/.gitkeep
+output/*
+!output/.gitkeep
+
+# Claude Code
+CLAUDE.md
+
+# cookies.json
+cookies.json
+
+.DS_Store
