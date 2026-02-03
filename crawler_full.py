@@ -42,6 +42,7 @@ class JDCrawler:
         self.context = None
         self.page = None
         self.products = []
+        self.current_category = None  # 当前正在爬取的类目
 
     async def init(self, headless=True):
         """初始化浏览器"""
@@ -594,7 +595,8 @@ class JDCrawler:
         print(f"页码范围: {START_PAGE} - {END_PAGE}")
         print("=" * 60)
 
-        # 清空上一个类目的数据
+        # 记录当前类目，清空上一个类目的数据
+        self.current_category = category_name
         self.products = []
         all_sku_ids = []
 
@@ -771,15 +773,16 @@ async def main():
     finally:
         # 无论正常结束还是异常退出，都尝试保存未保存的数据
         if interrupted and crawler.products:
-            print(f"\n→ 已爬取 {len(crawler.products)} 个商品，正在导出...")
+            category_name = crawler.current_category or "未知类目"
+            print(f"\n→ 类目 [{category_name}] 已爬取 {len(crawler.products)} 个商品，正在导出...")
             try:
-                await crawler.save_to_excel("中断保存")
+                await crawler.save_to_excel(category_name)
             except Exception as e:
                 print(f"✗ 导出失败: {e}")
                 # 尝试保存为 JSON 作为最后的兜底
                 try:
                     emergency_file = OUTPUT_DIR / \
-                        f"emergency_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                        f"emergency_backup_{category_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
                     OUTPUT_DIR.mkdir(exist_ok=True)
                     with open(emergency_file, "w", encoding="utf-8") as f:
                         json.dump(crawler.products, f,
