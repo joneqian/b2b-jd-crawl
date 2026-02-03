@@ -29,7 +29,8 @@ OUTPUT_DIR = Path("output")
 SCREENSHOTS_DIR = Path("screenshots")
 
 # 爬取配置
-CATEGORY_NAME = os.getenv("CATEGORY_NAME", "休闲零食")
+# 支持多个类目，用逗号分隔，如: "休闲零食,饮料冲调,粮油调味"
+CATEGORY_NAMES = [c.strip() for c in os.getenv("CATEGORY_NAMES", "休闲零食").split(",") if c.strip()]
 START_PAGE = int(os.getenv("START_PAGE", "1"))
 END_PAGE = int(os.getenv("END_PAGE", "3"))
 
@@ -95,65 +96,71 @@ class JDCrawler:
             return False
         return True
 
-    async def select_category(self, category_name):
-        """选择商品类目（在筛选区域的"类目"行中查找）"""
+    async def wait_for_product_list_api(self, timeout=15000):
+        """等待商品列表API响应完成"""
+        api_responded = {"done": False}
+
+        async def on_response(response):
+            url = response.url
+            if 'api.m.jd.com' in url:
+                # 获取对应的请求，检查 POST 参数
+                request = response.request
+                post_data = request.post_data
+                if post_data and 'functionId=bmall_goodsm_purchase_search_list' in post_data:
+                    api_responded["done"] = True
+
+        self.page.on('response', on_response)
+
+        # 等待API响应，最多等待timeout毫秒
+        wait_interval = 200
+        max_wait = timeout // wait_interval
+        for _ in range(max_wait):
+            if api_responded["done"]:
+                break
+            await self.page.wait_for_timeout(wait_interval)
+
+        self.page.remove_listener('response', on_response)
+
+        if api_responded["done"]:
+            # API已响应，额外等待一小段时间确保数据渲染完成
+            await self.page.wait_for_timeout(1000)
+            return True
+        else:
+            print(f"  ⚠ 等待商品列表API超时")
+            return False
+
+    async def select_type(self, type_name, timeout=10000):
+        """选择商品类型（使用CSS选择器 + 文本匹配）"""
         try:
-            # 在筛选区域中查找"类目"行，然后点击对应的选项
-            result = await self.page.evaluate(f'''() => {{
-                const filterItems = document.querySelectorAll('.shop-filter-item');
+            # 使用 locator 查找：类型行 -> 包含指定文本的选项 -> 内部的 p 元素
+            locator = self.page.locator('.shop-filter-item').filter(
+                has_text='类型').locator(f'.content-item:has-text("{type_name}") p')
 
-                for (const item of filterItems) {{
-                    const title = item.querySelector('.title');
-                    if (title && title.innerText.trim() === '类目') {{
-                        // 找到"类目"行，查找目标选项
-                        const options = item.querySelectorAll('.content-item');
-                        for (const opt of options) {{
-                            const text = opt.innerText.trim();
-                            if (text === '{category_name}') {{
-                                opt.click();
-                                return {{ success: true, matched: 'exact' }};
-                            }}
-                        }}
-                        // 如果没有精确匹配，尝试包含匹配
-                        for (const opt of options) {{
-                            const text = opt.innerText.trim();
-                            if (text.includes('{category_name}') || '{category_name}'.includes(text)) {{
-                                opt.click();
-                                return {{ success: true, matched: 'partial', text: text }};
-                            }}
-                        }}
-                        // 返回可用的类目列表
-                        const available = [];
-                        options.forEach(opt => {{
-                            if (opt.style.display !== 'none') {{
-                                available.push(opt.innerText.trim());
-                            }}
-                        }});
-                        return {{ success: false, available: available.slice(0, 15) }};
-                    }}
-                }}
-                return {{ success: false, error: '未找到类目筛选行' }};
-            }}''')
-
-            if result.get('success'):
-                match_type = result.get('matched', '')
-                if match_type == 'partial':
-                    print(f"  ✓ 已选择类目: {result.get('text')} (部分匹配)")
-                else:
-                    print(f"  ✓ 已选择类目: {category_name}")
-                await self.page.wait_for_timeout(3000)
-                return True
-            else:
-                available = result.get('available', [])
-                if available:
-                    print(f"  ⚠ 未找到类目 '{category_name}'")
-                    print(f"    可用类目: {', '.join(available)}")
-                else:
-                    print(f"  ⚠ {result.get('error', '类目选择失败')}")
-                return False
+            # 等待元素出现
+            await locator.wait_for(state='visible', timeout=timeout)
+            await locator.click()
+            print(f"  ✓ 已选择类型: {type_name}")
+            return True
 
         except Exception as e:
-            print(f"  选择类目异常: {e}")
+            print(f"  ⚠ 选择类型失败: {e}")
+            return False
+
+    async def select_category(self, category_name, timeout=10000):
+        """选择商品类目（使用CSS选择器 + 文本匹配）"""
+        try:
+            # 使用 locator 查找：类目行 -> 包含指定文本的选项 -> 内部的 p 元素
+            locator = self.page.locator('.shop-filter-item').filter(
+                has_text='类目').locator(f'.content-item:has-text("{category_name}") p')
+
+            # 等待元素出现
+            await locator.wait_for(state='visible', timeout=timeout)
+            await locator.click()
+            print(f"  ✓ 已选择类目: {category_name}")
+            return True
+
+        except Exception as e:
+            print(f"  ⚠ 选择类目失败: {e}")
             return False
 
     async def check_login_status(self):
@@ -267,7 +274,7 @@ class JDCrawler:
             print("✗ 登录失败")
             return False
 
-    async def get_sku_ids_from_page(self, page_num):
+    async def get_sku_ids_from_page(self, page_num, category_name=None):
         """从当前页面获取SKU ID列表（处理滚动懒加载）"""
         captured_skus = []
 
@@ -300,13 +307,27 @@ class JDCrawler:
                 self.page.remove_listener('response', capture_api)
                 return []
 
+            # 先选择类型为"自营"
+            print(f"→ 选择类型: 自营")
+            type_selected = await self.select_type("自营")
+            if not type_selected:
+                print(f"  ⚠ 未能选择'自营'类型")
+            else:
+                print(f"  → 等待商品列表加载...")
+                await self.wait_for_product_list_api()
+
+            # 清空之前捕获的SKU，只采集最终筛选后的商品
+            captured_skus.clear()
+
             # 选择类目
-            if CATEGORY_NAME:
-                print(f"→ 选择类目: {CATEGORY_NAME}")
-                category_selected = await self.select_category(CATEGORY_NAME)
+            if category_name:
+                print(f"→ 选择类目: {category_name}")
+                category_selected = await self.select_category(category_name)
                 if not category_selected:
-                    print(f"  ⚠ 未找到类目 '{CATEGORY_NAME}'，使用默认列表")
-                await self.page.wait_for_timeout(2000)
+                    print(f"  ⚠ 未找到类目 '{category_name}'，使用默认列表")
+                else:
+                    print(f"  → 等待商品列表加载...")
+                    await self.wait_for_product_list_api()
         else:
             print(f"→ 切换到第 {page_num} 页")
             try:
@@ -360,7 +381,8 @@ class JDCrawler:
 
             # 分步滚动（每次滚动一个视口高度）
             current_scroll = await self.page.evaluate("window.pageYOffset")
-            target_scroll = min(current_scroll + viewport_height, scroll_height)
+            target_scroll = min(
+                current_scroll + viewport_height, scroll_height)
 
             await self.page.evaluate(f"window.scrollTo(0, {target_scroll})")
             await self.page.wait_for_timeout(1500)  # 等待懒加载触发
@@ -424,7 +446,8 @@ class JDCrawler:
 
             # 从HTML提取详情图
             if detail_data.get('api_data'):
-                graphic_dto = detail_data['api_data'].get('viewGraphicDetailDTO', {})
+                graphic_dto = detail_data['api_data'].get(
+                    'viewGraphicDetailDTO', {})
                 if not graphic_dto.get('productDesc'):
                     detail_images = await self._extract_detail_images(detail_page)
                     if detail_images:
@@ -441,7 +464,8 @@ class JDCrawler:
         """从HTML提取详情图"""
         detail_images = []
         try:
-            selectors = [".goodsdetail-content__image img", "[class*='detail'] img"]
+            selectors = [".goodsdetail-content__image img",
+                         "[class*='detail'] img"]
             for selector in selectors:
                 imgs = await page.query_selector_all(selector)
                 for img in imgs:
@@ -471,6 +495,7 @@ class JDCrawler:
             "jd_price": "",
             "retail_price": "",
             "main_price": "",
+            "minimum_purchase": 9999,  # 起购数量，默认9999
         }
 
         if not api_data:
@@ -511,6 +536,13 @@ class JDCrawler:
         if isinstance(main_position_price, dict):
             info['main_price'] = main_position_price.get('value', '')
 
+        # 起购数量
+        selected_dto = api_data.get('viewSelectedDTO', {})
+        if isinstance(selected_dto, dict):
+            minimum_purchase = selected_dto.get('minimumPurchaseLimit')
+            if minimum_purchase is not None:
+                info['minimum_purchase'] = minimum_purchase
+
         # 主图
         master_dto = api_data.get('viewMasterMapDTO', {})
         for img in master_dto.get('wareImage', []):
@@ -542,7 +574,8 @@ class JDCrawler:
         # 详情图
         product_desc = graphic_dto.get('productDesc', '')
         if product_desc:
-            img_urls = re.findall(r'(?:src|data-lazyload)=["\']([^"\'\s]+)["\']', product_desc)
+            img_urls = re.findall(
+                r'(?:src|data-lazyload)=["\']([^"\'\s]+)["\']', product_desc)
             for img_url in img_urls:
                 if img_url.startswith('//'):
                     img_url = 'https:' + img_url
@@ -554,12 +587,71 @@ class JDCrawler:
 
         return info
 
+    async def crawl_category(self, category_name):
+        """爬取单个类目的商品"""
+        print(f"\n{'=' * 60}")
+        print(f"开始爬取类目: {category_name}")
+        print(f"页码范围: {START_PAGE} - {END_PAGE}")
+        print("=" * 60)
+
+        # 清空上一个类目的数据
+        self.products = []
+        all_sku_ids = []
+
+        # 获取商品列表
+        for page_num in range(START_PAGE, END_PAGE + 1):
+            print(f"\n=== 第 {page_num} 页 ===")
+            sku_ids = await self.get_sku_ids_from_page(page_num, category_name)
+            print(f"  获取到 {len(sku_ids)} 个SKU")
+
+            for sku_id in sku_ids:
+                if sku_id not in all_sku_ids:
+                    all_sku_ids.append(sku_id)
+
+            await self.page.wait_for_timeout(2000)
+
+        print(f"\n✓ 类目 [{category_name}] 共获取 {len(all_sku_ids)} 个商品SKU")
+
+        # 获取商品详情
+        print(f"\n=== 开始获取商品详情 ===")
+
+        for i, sku_id in enumerate(all_sku_ids):
+            print(f"\n[{i+1}/{len(all_sku_ids)}] 处理商品 {sku_id}")
+            print(f"  → 访问详情页")
+
+            detail_result = await self.get_detail_from_api(sku_id)
+            api_data = detail_result.get('api_data', {})
+            html_images = detail_result.get('html_detail_images', [])
+
+            if api_data:
+                product_info = self.extract_product_info(api_data, html_images)
+                if not product_info['sku_id']:
+                    product_info['sku_id'] = sku_id
+                self.products.append(product_info)
+                print(f"    ✓ {product_info['name'][:40]}...")
+                print(f"      品牌: {product_info['brand']}")
+                print(
+                    f"      京东价: ¥{product_info['jd_price']}  建议零售价: ¥{product_info['retail_price']}")
+                print(
+                    f"      主图: {len(product_info['main_images'])} 张, 详情图: {len(product_info['detail_images'])} 张")
+            else:
+                print(f"    ✗ 未获取到数据")
+                self.products.append({'sku_id': sku_id})
+
+            await asyncio.sleep(1)
+
+        print(f"\n✓ 类目 [{category_name}] 共处理 {len(self.products)} 个商品")
+
+        # 保存当前类目的数据
+        if self.products:
+            await self.save_to_excel(category_name)
+
     async def crawl(self):
-        """执行爬取"""
+        """执行爬取（支持多个类目）"""
         print("=" * 60)
         print("京东万商商品数据爬虫")
-        print(f"类别: {CATEGORY_NAME}")
-        print(f"页码: {START_PAGE} - {END_PAGE}")
+        print(f"类目列表: {', '.join(CATEGORY_NAMES)}")
+        print(f"页码范围: {START_PAGE} - {END_PAGE}")
         print("=" * 60)
 
         # 初始化浏览器（有头模式以便处理验证）
@@ -584,51 +676,19 @@ class JDCrawler:
         await self.init(headless=False)
         await self.load_cookies()
 
-        all_sku_ids = []
+        # 依次爬取每个类目
+        for i, category_name in enumerate(CATEGORY_NAMES):
+            print(f"\n{'#' * 60}")
+            print(f"# 进度: {i+1}/{len(CATEGORY_NAMES)} - 类目: {category_name}")
+            print("#" * 60)
 
-        # 获取商品列表
-        for page_num in range(START_PAGE, END_PAGE + 1):
-            print(f"\n=== 第 {page_num} 页 ===")
-            sku_ids = await self.get_sku_ids_from_page(page_num)
-            print(f"  获取到 {len(sku_ids)} 个SKU")
+            await self.crawl_category(category_name)
 
-            for sku_id in sku_ids:
-                if sku_id not in all_sku_ids:
-                    all_sku_ids.append(sku_id)
+        print(f"\n{'=' * 60}")
+        print(f"全部类目爬取完成！共 {len(CATEGORY_NAMES)} 个类目")
+        print("=" * 60)
 
-            await self.page.wait_for_timeout(2000)
-
-        print(f"\n✓ 共获取 {len(all_sku_ids)} 个商品SKU")
-
-        # 获取商品详情
-        print(f"\n=== 开始获取商品详情 ===")
-
-        for i, sku_id in enumerate(all_sku_ids):
-            print(f"\n[{i+1}/{len(all_sku_ids)}] 处理商品 {sku_id}")
-            print(f"  → 访问详情页")
-
-            detail_result = await self.get_detail_from_api(sku_id)
-            api_data = detail_result.get('api_data', {})
-            html_images = detail_result.get('html_detail_images', [])
-
-            if api_data:
-                product_info = self.extract_product_info(api_data, html_images)
-                if not product_info['sku_id']:
-                    product_info['sku_id'] = sku_id
-                self.products.append(product_info)
-                print(f"    ✓ {product_info['name'][:40]}...")
-                print(f"      品牌: {product_info['brand']}")
-                print(f"      京东价: ¥{product_info['jd_price']}  建议零售价: ¥{product_info['retail_price']}")
-                print(f"      主图: {len(product_info['main_images'])} 张, 详情图: {len(product_info['detail_images'])} 张")
-            else:
-                print(f"    ✗ 未获取到数据")
-                self.products.append({'sku_id': sku_id})
-
-            await asyncio.sleep(1)
-
-        print(f"\n✓ 共处理 {len(self.products)} 个商品")
-
-    async def save_to_excel(self):
+    async def save_to_excel(self, category_name="未分类"):
         """保存到Excel"""
         OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -638,7 +698,7 @@ class JDCrawler:
 
         headers = [
             "SKU ID", "商品名称", "品牌", "分类",
-            "京东价", "建议零售价", "主显示价",
+            "京东价", "建议零售价", "主显示价", "起购数量",
             "保质期", "生产日期",
             "主图1", "主图2", "主图3", "主图4", "主图5",
             "参数JSON", "详情图数量", "详情图列表"
@@ -658,6 +718,7 @@ class JDCrawler:
                 product.get("jd_price", ""),
                 product.get("retail_price", ""),
                 product.get("main_price", ""),
+                product.get("minimum_purchase", 9999),
                 product.get("shelf_life", ""),
                 product.get("manufacturing_date", ""),
                 main_images[0], main_images[1], main_images[2], main_images[3], main_images[4],
@@ -668,11 +729,11 @@ class JDCrawler:
             ws.append(row)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = OUTPUT_DIR / f"products_{CATEGORY_NAME}_{timestamp}.xlsx"
+        filename = OUTPUT_DIR / f"products_{category_name}_{timestamp}.xlsx"
         wb.save(filename)
         print(f"\n✓ Excel已保存: {filename}")
 
-        json_filename = OUTPUT_DIR / f"products_{CATEGORY_NAME}_{timestamp}.json"
+        json_filename = OUTPUT_DIR / f"products_{category_name}_{timestamp}.json"
         with open(json_filename, "w", encoding="utf-8") as f:
             json.dump(self.products, f, ensure_ascii=False, indent=2)
         print(f"✓ JSON已保存: {json_filename}")
@@ -708,19 +769,21 @@ async def main():
         print(f"\n\n✗ 爬虫异常: {e}")
         print("→ 正在保存已爬取的数据...")
     finally:
-        # 无论正常结束还是异常退出，都尝试保存数据
-        if crawler.products:
+        # 无论正常结束还是异常退出，都尝试保存未保存的数据
+        if interrupted and crawler.products:
             print(f"\n→ 已爬取 {len(crawler.products)} 个商品，正在导出...")
             try:
-                await crawler.save_to_excel()
+                await crawler.save_to_excel("中断保存")
             except Exception as e:
                 print(f"✗ 导出失败: {e}")
                 # 尝试保存为 JSON 作为最后的兜底
                 try:
-                    emergency_file = OUTPUT_DIR / f"emergency_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                    emergency_file = OUTPUT_DIR / \
+                        f"emergency_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
                     OUTPUT_DIR.mkdir(exist_ok=True)
                     with open(emergency_file, "w", encoding="utf-8") as f:
-                        json.dump(crawler.products, f, ensure_ascii=False, indent=2)
+                        json.dump(crawler.products, f,
+                                  ensure_ascii=False, indent=2)
                     print(f"✓ 紧急备份已保存: {emergency_file}")
                 except:
                     pass
