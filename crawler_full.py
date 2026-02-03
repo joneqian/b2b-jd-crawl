@@ -579,9 +579,9 @@ class JDCrawler:
                 await self.close()
                 return
 
-        # 切换到无头模式进行爬取（更快）
+        # 显示浏览器窗口进行爬取（方便调试）
         await self.close()
-        await self.init(headless=True)
+        await self.init(headless=False)
         await self.load_cookies()
 
         all_sku_ids = []
