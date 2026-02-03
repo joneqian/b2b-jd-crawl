@@ -731,11 +731,13 @@ class JDCrawler:
             ws.append(row)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = OUTPUT_DIR / f"products_{category_name}_{timestamp}.xlsx"
+        # 过滤文件名中的非法字符
+        safe_category_name = category_name.replace("/", "_").replace("\\", "_").replace(":", "_")
+        filename = OUTPUT_DIR / f"products_{safe_category_name}_{timestamp}.xlsx"
         wb.save(filename)
         print(f"\n✓ Excel已保存: {filename}")
 
-        json_filename = OUTPUT_DIR / f"products_{category_name}_{timestamp}.json"
+        json_filename = OUTPUT_DIR / f"products_{safe_category_name}_{timestamp}.json"
         with open(json_filename, "w", encoding="utf-8") as f:
             json.dump(self.products, f, ensure_ascii=False, indent=2)
         print(f"✓ JSON已保存: {json_filename}")
