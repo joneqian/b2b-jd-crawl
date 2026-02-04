@@ -16,6 +16,6 @@ output/*
 CLAUDE.md
 
 # cookies.json
-cookies.json
+cookies/*
 
 .DS_Store

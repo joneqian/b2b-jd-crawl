@@ -24,7 +24,7 @@ load_dotenv()
 BASE_URL = "https://b2b.jd.com"
 LOGIN_URL = "https://b2b.jd.com/account/login"
 TARGET_URL = "https://b2b.jd.com/index/jdgp-list"
-COOKIES_FILE = "cookies.json"
+COOKIES_DIR = Path("cookies")  # cookies 目录
 OUTPUT_DIR = Path("output")
 SCREENSHOTS_DIR = Path("screenshots")
 
@@ -43,6 +43,14 @@ class JDCrawler:
         self.page = None
         self.products = []
         self.current_category = None  # 当前正在爬取的类目
+        self.username = os.getenv("JD_USERNAME", "")  # 当前用户名
+
+    def get_cookies_file(self):
+        """获取当前用户的 cookies 文件路径"""
+        COOKIES_DIR.mkdir(exist_ok=True)
+        # 使用用户名作为文件名，过滤非法字符
+        safe_username = self.username.replace("/", "_").replace("\\", "_").replace(":", "_")
+        return COOKIES_DIR / f"cookies_{safe_username}.json"
 
     async def init(self, headless=True):
         """初始化浏览器"""
@@ -59,21 +67,23 @@ class JDCrawler:
         await stealth.apply_stealth_async(self.page)
 
     async def load_cookies(self):
-        """加载cookies"""
-        if os.path.exists(COOKIES_FILE):
-            with open(COOKIES_FILE, "r", encoding="utf-8") as f:
+        """加载当前用户的 cookies"""
+        cookies_file = self.get_cookies_file()
+        if cookies_file.exists():
+            with open(cookies_file, "r", encoding="utf-8") as f:
                 cookies = json.load(f)
             await self.context.add_cookies(cookies)
-            print("✓ 已加载 Cookies")
+            print(f"✓ 已加载 Cookies: {cookies_file.name}")
             return True
         return False
 
     async def save_cookies(self):
-        """保存cookies"""
+        """保存当前用户的 cookies"""
+        cookies_file = self.get_cookies_file()
         cookies = await self.context.cookies()
-        with open(COOKIES_FILE, "w", encoding="utf-8") as f:
+        with open(cookies_file, "w", encoding="utf-8") as f:
             json.dump(cookies, f, ensure_ascii=False, indent=2)
-        print("✓ Cookies 已保存")
+        print(f"✓ Cookies 已保存: {cookies_file.name}")
 
     async def handle_risk_verification(self):
         """处理风控验证"""
