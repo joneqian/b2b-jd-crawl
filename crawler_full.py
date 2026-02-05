@@ -364,12 +364,16 @@ class JDCrawler:
                         continue
 
                 if not clicked:
-                    # 尝试点击下一页
-                    next_btn = await self.page.query_selector(".rcd-pagination__btn-next")
+                    # 尝试点击下一页（检查是否被禁用）
+                    next_btn = await self.page.query_selector(".rcd-pagination__btn-next:not([disabled])")
                     if next_btn:
                         await next_btn.click()
                         clicked = True
                         print(f"  点击下一页成功")
+                    else:
+                        print(f"  ⚠ 已到达最后一页")
+                        self.page.remove_listener('response', capture_api)
+                        return None  # 返回 None 表示已到达最后一页
 
                 # 翻页后回到顶部，准备滚动加载
                 await self.page.wait_for_timeout(2000)
@@ -459,7 +463,7 @@ class JDCrawler:
             if detail_data.get('api_data'):
                 graphic_dto = detail_data['api_data'].get(
                     'viewGraphicDetailDTO', {})
-                if not graphic_dto.get('productDesc'):
+                if not graphic_dto.get('cssStyle'):
                     detail_images = await self._extract_detail_images(detail_page)
                     if detail_images:
                         detail_data['html_detail_images'] = detail_images
@@ -582,11 +586,11 @@ class JDCrawler:
                             if name and value and name not in info['params']:
                                 info['params'][name] = value
 
-        # 详情图
-        product_desc = graphic_dto.get('productDesc', '')
-        if product_desc:
+        # 详情图 - 从cssStyle中提取background-image:url(...)
+        css_style = graphic_dto.get('cssStyle', '')
+        if css_style:
             img_urls = re.findall(
-                r'(?:src|data-lazyload)=["\']([^"\'\s]+)["\']', product_desc)
+                r'background-image:\s*url\(([^)]+)\)', css_style)
             for img_url in img_urls:
                 if img_url.startswith('//'):
                     img_url = 'https:' + img_url
@@ -614,6 +618,12 @@ class JDCrawler:
         for page_num in range(START_PAGE, END_PAGE + 1):
             print(f"\n=== 第 {page_num} 页 ===")
             sku_ids = await self.get_sku_ids_from_page(page_num, category_name)
+
+            if sku_ids is None:
+                # 已到达最后一页
+                print(f"  已到达最后一页，停止采集")
+                break
+
             print(f"  获取到 {len(sku_ids)} 个SKU")
 
             for sku_id in sku_ids:
