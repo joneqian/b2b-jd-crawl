@@ -173,8 +173,8 @@ class JDCrawler:
             except Exception:
                 print(f"  → 未找到展开按钮或已展开")
 
-            # 使用 locator 查找：类目行 -> 包含指定文本的选项 -> 内部的 p 元素
-            locator = category_row.locator(f'.content-item:has-text("{category_name}") p')
+            # 使用 title 属性精确匹配类目名称，避免模糊匹配（如"卫生巾"匹配到"裤型卫生巾"）
+            locator = category_row.locator(f'.content-item .ellipsis[title="{category_name}"] p')
 
             # 等待元素出现
             await locator.wait_for(state='visible', timeout=timeout)
