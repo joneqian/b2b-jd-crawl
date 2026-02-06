@@ -160,9 +160,21 @@ class JDCrawler:
     async def select_category(self, category_name, timeout=10000):
         """选择商品类目（使用CSS选择器 + 文本匹配）"""
         try:
+            # 先找到类目所在的筛选行
+            category_row = self.page.locator('.shop-filter-item').filter(has_text='类目')
+
+            # 点击展开按钮，展示全部类目选项
+            try:
+                expand_btn = category_row.locator('.b2b-index-com-collapse:has-text("展开")')
+                if await expand_btn.count() > 0:
+                    await expand_btn.first.click()
+                    print(f"  ✓ 已展开类目列表")
+                    await self.page.wait_for_timeout(500)
+            except Exception:
+                print(f"  → 未找到展开按钮或已展开")
+
             # 使用 locator 查找：类目行 -> 包含指定文本的选项 -> 内部的 p 元素
-            locator = self.page.locator('.shop-filter-item').filter(
-                has_text='类目').locator(f'.content-item:has-text("{category_name}") p')
+            locator = category_row.locator(f'.content-item:has-text("{category_name}") p')
 
             # 等待元素出现
             await locator.wait_for(state='visible', timeout=timeout)
